@@ -45,8 +45,6 @@ pub fn generateZirData(self: *Autodoc) !void {
     defer self.arena.free(abs_root_path);
     const zir = self.module.import_table.get(abs_root_path).?.zir;
 
-    // var decl_map = std.AutoHashMap(Zir.Inst.Index, usize); // values are positions in the `decls` array
-
     // append all the types in Zir.Inst.Ref
     {
 
@@ -55,14 +53,16 @@ pub fn generateZirData(self: *Autodoc) !void {
         while (i <= @enumToInt(Ref.anyerror_void_error_union_type)) : (i += 1) {
             var tmpbuf = std.ArrayList(u8).init(self.arena);
             try Ref.typed_value_map[i].val.format("", .{}, tmpbuf.writer());
-            try self.types.append(self.arena, .{
-                .name = tmpbuf.toOwnedSlice(),
-                .kind = switch (@intToEnum(Ref, i)) {
+            try self.types.append(
+                self.arena,
+                switch (@intToEnum(Ref, i)) {
                     else => blk: {
                         //std.debug.print("TODO: categorize `{s}` in typeKinds\n", .{
                         //    @tagName(t),
                         //});
-                        break :blk 7;
+                        break :blk .{
+                            .Array = .{ .name = tmpbuf.toOwnedSlice() },
+                        };
                     },
                     .u1_type,
                     .u8_type,
@@ -86,19 +86,35 @@ pub fn generateZirData(self: *Autodoc) !void {
                     .c_longlong_type,
                     .c_ulonglong_type,
                     .c_longdouble_type,
-                    => @enumToInt(std.builtin.TypeId.Int),
+                    => .{
+                        .Int = .{ .name = tmpbuf.toOwnedSlice() },
+                    },
                     .f16_type,
                     .f32_type,
                     .f64_type,
                     .f128_type,
-                    => @enumToInt(std.builtin.TypeId.Float),
-                    .comptime_int_type => @enumToInt(std.builtin.TypeId.ComptimeInt),
-                    .comptime_float_type => @enumToInt(std.builtin.TypeId.ComptimeFloat),
-                    .bool_type => @enumToInt(std.builtin.TypeId.Bool),
-                    .void_type => @enumToInt(std.builtin.TypeId.Void),
-                    .type_type => @enumToInt(std.builtin.TypeId.Type),
+                    => .{
+                        .Float = .{ .name = tmpbuf.toOwnedSlice() },
+                    },
+                    .comptime_int_type => .{
+                        .ComptimeInt = .{ .name = tmpbuf.toOwnedSlice() },
+                    },
+                    .comptime_float_type => .{
+                        .ComptimeFloat = .{ .name = tmpbuf.toOwnedSlice() },
+                    },
+
+                    .bool_type => .{
+                        .Bool = .{ .name = tmpbuf.toOwnedSlice() },
+                    },
+
+                    .void_type => .{
+                        .Void = .{ .name = tmpbuf.toOwnedSlice() },
+                    },
+                    .type_type => .{
+                        .Type = .{ .name = tmpbuf.toOwnedSlice() },
+                    },
                 },
-            });
+            );
         }
     }
 
@@ -115,16 +131,21 @@ pub fn generateZirData(self: *Autodoc) !void {
 
     data.packages[0].main = main_type_index.type;
 
-    if (self.doc_location.directory) |d|
-        (d.handle.makeDir(self.doc_location.basename) catch |e| switch (e) {
+    if (self.doc_location.directory) |d| {
+        d.handle.makeDir(
+            self.doc_location.basename,
+        ) catch |e| switch (e) {
             error.PathAlreadyExists => {},
             else => unreachable,
-        })
-    else
-        (self.module.zig_cache_artifact_directory.handle.makeDir(self.doc_location.basename) catch |e| switch (e) {
+        };
+    } else {
+        self.module.zig_cache_artifact_directory.handle.makeDir(
+            self.doc_location.basename,
+        ) catch |e| switch (e) {
             error.PathAlreadyExists => {},
             else => unreachable,
-        });
+        };
+    }
     const output_dir = if (self.doc_location.directory) |d|
         (d.handle.openDir(self.doc_location.basename, .{}) catch unreachable)
     else
@@ -222,18 +243,126 @@ const DocData = struct {
         fields: ?[]usize = null, // index into astNodes
     };
 
-    const Type = struct {
-        kind: u32, // index into typeKinds
-        name: []const u8,
-        src: ?usize = null, // index into astNodes
-        privDecls: ?[]usize = null, // index into decls
-        pubDecls: ?[]usize = null, // index into decls
-        fields: ?[]WalkResult = null, // (use src->fields to find names)
+    const Type = union(std.builtin.TypeId) {
+        Type: struct { name: []const u8 },
+        Void: struct { name: []const u8 },
+        Bool: struct { name: []const u8 },
+        NoReturn: struct { name: []const u8 },
+        Int: struct { name: []const u8 },
+        Float: struct { name: []const u8 },
+        Pointer: struct { name: []const u8 },
+        Array: struct { name: []const u8 },
+        Struct: struct {
+            name: []const u8,
+            src: ?usize = null, // index into astNodes
+            privDecls: ?[]usize = null, // index into decls
+            pubDecls: ?[]usize = null, // index into decls
+            fields: ?[]TypeRef = null, // (use src->fields to find names)
+        },
+        ComptimeFloat: struct { name: []const u8 },
+        ComptimeInt: struct { name: []const u8 },
+        Undefined: struct { name: []const u8 },
+        Null: struct { name: []const u8 },
+        Optional: struct { name: []const u8 },
+        ErrorUnion: struct { name: []const u8 },
+        ErrorSet: struct { name: []const u8 },
+        Enum: struct {
+            name: []const u8,
+            src: ?usize = null, // index into astNodes
+            privDecls: ?[]usize = null, // index into decls
+            pubDecls: ?[]usize = null, // index into decls
+            // (use src->fields to find field names)
+        },
+        Union: struct {
+            name: []const u8,
+            src: ?usize = null, // index into astNodes
+            privDecls: ?[]usize = null, // index into decls
+            pubDecls: ?[]usize = null, // index into decls
+            fields: ?[]TypeRef = null, // (use src->fields to find names)
+        },
+        Fn: struct {
+            name: []const u8,
+            src: ?usize = null, // index into astNodes
+            ret: TypeRef,
+            params: ?[]TypeRef = null, // (use src->fields to find names)
+        },
+        BoundFn: struct { name: []const u8 },
+        Opaque: struct { name: []const u8 },
+        Frame: struct { name: []const u8 },
+        AnyFrame: struct { name: []const u8 },
+        Vector: struct { name: []const u8 },
+        EnumLiteral: struct { name: []const u8 },
+
+        pub fn jsonStringify(
+            self: Type,
+            opt: std.json.StringifyOptions,
+            w: anytype,
+        ) !void {
+            try w.print(
+                \\{{ "kind": {},
+                \\
+            , .{@enumToInt(std.meta.activeTag(self))});
+            var options = opt;
+            if (options.whitespace) |*ws| ws.indent_level += 1;
+            switch (self) {
+                .Array => |v| try printTypeBody(v, options, w),
+                .Bool => |v| try printTypeBody(v, options, w),
+                .Void => |v| try printTypeBody(v, options, w),
+                .ComptimeInt => |v| try printTypeBody(v, options, w),
+                .ComptimeFloat => |v| try printTypeBody(v, options, w),
+                .Null => |v| try printTypeBody(v, options, w),
+
+                .Struct => |v| try printTypeBody(v, options, w),
+                .Fn => |v| try printTypeBody(v, options, w),
+                .Union => |v| try printTypeBody(v, options, w),
+                .Enum => |v| try printTypeBody(v, options, w),
+                .Int => |v| try printTypeBody(v, options, w),
+                .Float => |v| try printTypeBody(v, options, w),
+                .Type => |v| try printTypeBody(v, options, w),
+                else => {
+                    std.debug.print(
+                        "TODO: add {s} to `DocData.Type.jsonStringify`\n",
+                        .{@tagName(self)},
+                    );
+                },
+            }
+            try w.print("}}", .{});
+        }
+
+        fn printTypeBody(
+            body: anytype,
+            options: std.json.StringifyOptions,
+            w: anytype,
+        ) !void {
+            const fields = std.meta.fields(@TypeOf(body));
+            inline for (fields) |f, idx| {
+                if (options.whitespace) |ws| try ws.outputIndent(w);
+                try w.print("\"{s}\": ", .{f.name});
+                try std.json.stringify(@field(body, f.name), options, w);
+                if (idx != fields.len - 1) try w.writeByte(',');
+                try w.writeByte('\n');
+            }
+            if (options.whitespace) |ws| {
+                var up = ws;
+                up.indent_level -= 1;
+                try up.outputIndent(w);
+            }
+        }
     };
+
     const TypeRef = union(enum) {
         unspecified,
         declRef: usize, // index in `decls`
         type: usize, // index in `types`
+
+        pub fn fromWalkResult(wr: WalkResult) TypeRef {
+            return switch (wr) {
+                .declRef => |v| .{ .declRef = v },
+                .type => |v| .{ .type = v },
+                else => @panic("Found non-type WalkResult"),
+            };
+        }
+
         pub fn jsonStringify(
             self: TypeRef,
             _: std.json.StringifyOptions,
@@ -245,6 +374,7 @@ const DocData = struct {
                         \\{{ "unspecified":{{}} }}
                     , .{});
                 },
+
                 .declRef, .type => |v| {
                     try w.print(
                         \\{{ "{s}":{} }}
@@ -285,9 +415,7 @@ const DocData = struct {
             w: anytype,
         ) !void {
             switch (self) {
-                .void,
-                .@"unreachable",
-                => {
+                .void, .@"unreachable" => {
                     try w.print(
                         \\{{ "{s}":{{}} }}
                     , .{@tagName(self)});
@@ -358,7 +486,9 @@ fn walkInstruction(
             const int = data[inst_index].int;
             return DocData.WalkResult{
                 .int = .{
-                    .typeRef = .{ .type = @enumToInt(Ref.comptime_int_type) },
+                    .typeRef = .{
+                        .type = @enumToInt(Ref.comptime_int_type),
+                    },
                     .value = int,
                 },
             };
@@ -367,14 +497,20 @@ fn walkInstruction(
             const float = data[inst_index].float;
             return DocData.WalkResult{
                 .float = .{
-                    .typeRef = .{ .type = @enumToInt(Ref.comptime_float_type) },
+                    .typeRef = .{
+                        .type = @enumToInt(Ref.comptime_float_type),
+                    },
                     .value = float,
                 },
             };
         },
         .negate => {
             const un_node = data[inst_index].un_node;
-            var operand = try self.walkRef(zir, parent_scope, un_node.operand);
+            var operand: DocData.WalkResult = try self.walkRef(
+                zir,
+                parent_scope,
+                un_node.operand,
+            );
             operand.int.negated = true; // only support ints for now
             return operand;
         },
@@ -418,8 +554,7 @@ fn walkInstruction(
             const name = try std.fmt.allocPrint(self.arena, "{s}{}", .{ sign, bits });
 
             try self.types.append(self.arena, .{
-                .kind = @enumToInt(std.builtin.TypeId.Int),
-                .name = name,
+                .Int = .{ .name = name },
             });
             return DocData.WalkResult{ .type = self.types.items.len - 1 };
         },
@@ -430,12 +565,57 @@ fn walkInstruction(
             const break_operand = data[break_index].@"break".operand;
             return self.walkRef(zir, parent_scope, break_operand);
         },
+        .func => {
+            const fn_info = zir.getFnInfo(@intCast(u32, inst_index));
+
+            // TODO: change this to a resize and change the appends accordingly
+            try self.ast_nodes.ensureUnusedCapacity(self.arena, fn_info.total_params_len);
+            try self.types.ensureUnusedCapacity(self.arena, fn_info.total_params_len);
+            var param_type_refs = try std.ArrayListUnmanaged(DocData.TypeRef).initCapacity(
+                self.arena,
+                fn_info.total_params_len,
+            );
+            var param_ast_indexes = try std.ArrayListUnmanaged(usize).initCapacity(
+                self.arena,
+                fn_info.total_params_len,
+            );
+            for (fn_info.param_body[0..fn_info.total_params_len]) |param_index| {
+                if (tags[param_index] != .param) unreachable; // TODO: handle more param types
+                const pl_tok = data[param_index].pl_tok;
+                const extra = zir.extraData(Zir.Inst.Param, pl_tok.payload_index);
+
+                param_ast_indexes.appendAssumeCapacity(self.ast_nodes.items.len);
+                try self.ast_nodes.append(self.arena, .{
+                    .name = zir.nullTerminatedString(zir.extra[extra.data.name]),
+                    .docs = "",
+                });
+
+                const break_index = zir.extra[extra.end..][extra.data.body_len - 1];
+                const break_operand = data[break_index].@"break".operand;
+                const walk_res = try self.walkRef(zir, parent_scope, break_operand);
+
+                param_type_refs.appendAssumeCapacity(
+                    DocData.TypeRef.fromWalkResult(walk_res),
+                );
+            }
+
+            self.ast_nodes.items[self_ast_node_index].fields = param_ast_indexes.items;
+            try self.types.append(self.arena, .{
+                .Fn = .{
+                    .name = "todo_name func",
+                    .src = self_ast_node_index,
+                    .params = param_type_refs.items,
+                    .ret = .{ .type = @enumToInt(Ref.void_type) },
+                },
+            });
+            return DocData.WalkResult{ .type = self.types.items.len - 1 };
+        },
         .extended => {
             const extended = data[inst_index].extended;
             switch (extended.opcode) {
                 else => {
                     std.debug.panic(
-                        "TODO: implement `walkInstruction.extended` for {s}\n\n",
+                        "TODO: implement `walkinstruction.extended` for {s}\n\n",
                         .{@tagName(extended.opcode)},
                     );
                 },
@@ -508,13 +688,19 @@ fn walkInstruction(
                     // const body = zir.extra[extra_index..][0..body_len];
                     extra_index += body_len;
 
-                    var field_type_indexes: std.ArrayListUnmanaged(DocData.WalkResult) = .{};
-                    var field_name_indexes: std.ArrayListUnmanaged(usize) = .{};
+                    var field_type_refs = try std.ArrayListUnmanaged(DocData.TypeRef).initCapacity(
+                        self.arena,
+                        fields_len,
+                    );
+                    var field_name_indexes = try std.ArrayListUnmanaged(usize).initCapacity(
+                        self.arena,
+                        fields_len,
+                    );
                     try self.collectUnionFieldInfo(
                         zir,
                         &scope,
                         fields_len,
-                        &field_type_indexes,
+                        &field_type_refs,
                         &field_name_indexes,
                         extra_index,
                     );
@@ -522,12 +708,13 @@ fn walkInstruction(
                     self.ast_nodes.items[self_ast_node_index].fields = field_name_indexes.items;
 
                     try self.types.append(self.arena, .{
-                        .kind = @enumToInt(std.builtin.TypeId.Union),
-                        .name = "todo_name",
-                        .src = self_ast_node_index,
-                        .privDecls = priv_decl_indexes.items,
-                        .pubDecls = decl_indexes.items,
-                        .fields = field_type_indexes.items,
+                        .Union = .{
+                            .name = "todo_name",
+                            .src = self_ast_node_index,
+                            .privDecls = priv_decl_indexes.items,
+                            .pubDecls = decl_indexes.items,
+                            .fields = field_type_refs.items,
+                        },
                     });
 
                     return DocData.WalkResult{ .type = self.types.items.len - 1 };
@@ -647,11 +834,12 @@ fn walkInstruction(
                     self.ast_nodes.items[self_ast_node_index].fields = field_name_indexes.items;
 
                     try self.types.append(self.arena, .{
-                        .kind = @enumToInt(std.builtin.TypeId.Enum),
-                        .name = "todo_name",
-                        .src = self_ast_node_index,
-                        .privDecls = priv_decl_indexes.items,
-                        .pubDecls = decl_indexes.items,
+                        .Enum = .{
+                            .name = "todo_name",
+                            .src = self_ast_node_index,
+                            .privDecls = priv_decl_indexes.items,
+                            .pubDecls = decl_indexes.items,
+                        },
                     });
 
                     return DocData.WalkResult{ .type = self.types.items.len - 1 };
@@ -718,13 +906,13 @@ fn walkInstruction(
                     // const body = zir.extra[extra_index..][0..body_len];
                     extra_index += body_len;
 
-                    var field_type_indexes: std.ArrayListUnmanaged(DocData.WalkResult) = .{};
+                    var field_type_refs: std.ArrayListUnmanaged(DocData.TypeRef) = .{};
                     var field_name_indexes: std.ArrayListUnmanaged(usize) = .{};
                     try self.collectStructFieldInfo(
                         zir,
                         &scope,
                         fields_len,
-                        &field_type_indexes,
+                        &field_type_refs,
                         &field_name_indexes,
                         extra_index,
                     );
@@ -732,12 +920,13 @@ fn walkInstruction(
                     self.ast_nodes.items[self_ast_node_index].fields = field_name_indexes.items;
 
                     try self.types.append(self.arena, .{
-                        .kind = @enumToInt(std.builtin.TypeId.Struct),
-                        .name = "todo_name",
-                        .src = self_ast_node_index,
-                        .privDecls = priv_decl_indexes.items,
-                        .pubDecls = decl_indexes.items,
-                        .fields = field_type_indexes.items,
+                        .Struct = .{
+                            .name = "todo_name",
+                            .src = self_ast_node_index,
+                            .privDecls = priv_decl_indexes.items,
+                            .pubDecls = decl_indexes.items,
+                            .fields = field_type_refs.items,
+                        },
                     });
 
                     return DocData.WalkResult{ .type = self.types.items.len - 1 };
@@ -891,7 +1080,7 @@ fn collectUnionFieldInfo(
     zir: Zir,
     scope: *Scope,
     fields_len: usize,
-    field_type_indexes: *std.ArrayListUnmanaged(DocData.WalkResult),
+    field_type_refs: *std.ArrayListUnmanaged(DocData.TypeRef),
     field_name_indexes: *std.ArrayListUnmanaged(usize),
     ei: usize,
 ) !void {
@@ -937,7 +1126,10 @@ fn collectUnionFieldInfo(
         // type
         {
             const walk_result = try self.walkRef(zir, scope, field_type);
-            try field_type_indexes.append(self.arena, walk_result);
+            try field_type_refs.append(
+                self.arena,
+                walkResultToTypeRef(walk_result),
+            );
         }
 
         // ast node
@@ -960,7 +1152,7 @@ fn collectStructFieldInfo(
     zir: Zir,
     scope: *Scope,
     fields_len: usize,
-    field_type_indexes: *std.ArrayListUnmanaged(DocData.WalkResult),
+    field_type_refs: *std.ArrayListUnmanaged(DocData.TypeRef),
     field_name_indexes: *std.ArrayListUnmanaged(usize),
     ei: usize,
 ) !void {
@@ -1003,7 +1195,10 @@ fn collectStructFieldInfo(
         // type
         {
             const walk_result = try self.walkRef(zir, scope, field_type);
-            try field_type_indexes.append(self.arena, walk_result);
+            try field_type_refs.append(
+                self.arena,
+                walkResultToTypeRef(walk_result),
+            );
         }
 
         // ast node
@@ -1118,7 +1313,7 @@ fn walkRef(
 fn walkResultToTypeRef(wr: DocData.WalkResult) DocData.TypeRef {
     return switch (wr) {
         else => std.debug.panic(
-            "TODO: handle `{s}` in `walkInstruction.as_node.dest_type`\n",
+            "TODO: handle `{s}` in `walkResultToTypeRef.as_node.dest_type`\n",
             .{@tagName(wr)},
         ),
 
@@ -1126,3 +1321,7 @@ fn walkResultToTypeRef(wr: DocData.WalkResult) DocData.TypeRef {
         .type => |v| .{ .type = v },
     };
 }
+
+//fn collectParamInfo(self: *Autodoc, zir: Zir, scope: *Scope, inst_idx: Zir.Index) void {
+
+//}
