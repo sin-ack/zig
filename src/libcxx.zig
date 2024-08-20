@@ -431,6 +431,8 @@ pub fn buildLibCXXABI(comp: *Compilation, prog_node: *std.Progress.Node) !void {
         try cflags.append("-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS");
         // This must be coordinated with the same flag in libcxx
         try cflags.append("-D_LIBCPP_PSTL_CPU_BACKEND_SERIAL");
+        // HACK: Enable GNU-style forgiving dynamic_casts that do strcmp.
+        try cflags.append("-D_LIBCXXABI_FORGIVING_DYNAMIC_CAST");
 
         try cflags.append(abi_version_arg);
         try cflags.append(abi_namespace_arg);
