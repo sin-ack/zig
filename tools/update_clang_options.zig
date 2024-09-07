@@ -536,6 +536,14 @@ const known_options = [_]KnownOpt{
         .name = "municode",
         .ident = "mingw_unicode_entry_point",
     },
+    .{
+        .name = "rtlib",
+        .ident = "rtlib",
+    },
+    .{
+        .name = "rtlib=",
+        .ident = "rtlib",
+    },
 };
 
 const blacklisted_options = [_][]const u8{};

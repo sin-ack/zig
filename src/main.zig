@@ -2116,6 +2116,19 @@ fn buildOutputType(
                             fatal("unsupported -undefined option '{s}'", .{it.only_arg});
                         }
                     },
+                    .rtlib => {
+                        // Unlike Clang, we support `none` for explicitly omitting compiler-rt.
+                        if (mem.eql(u8, "none", it.only_arg)) {
+                            want_compiler_rt = false;
+                        } else if (mem.eql(u8, "compiler-rt", it.only_arg) or
+                            mem.eql(u8, "libgcc", it.only_arg))
+                        {
+                            want_compiler_rt = true;
+                        } else {
+                            // Note that we don't support `platform`.
+                            fatal("unsupported -rtlib option '{s}'", .{it.only_arg});
+                        }
+                    },
                 }
             }
             // Parse linker args.
@@ -5775,6 +5788,7 @@ pub const ClangArgIterator = struct {
         undefined,
         force_load_objc,
         mingw_unicode_entry_point,
+        rtlib,
     };
 
     const Args = struct {
