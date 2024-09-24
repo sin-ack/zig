@@ -840,7 +840,6 @@ fn buildOutputType(
     var target_mcpu: ?[]const u8 = null;
     var emit_h: Emit = .no;
     var soname: SOName = undefined;
-    var want_compiler_rt: ?bool = null;
     var linker_script: ?[]const u8 = null;
     var version_script: ?[]const u8 = null;
     var linker_allow_undefined_version: bool = false;
@@ -985,6 +984,7 @@ fn buildOutputType(
         .libc_paths_file = try EnvVar.ZIG_LIBC.get(arena),
         .link_objects = .{},
         .native_system_include_paths = &.{},
+        .want_compiler_rt = null,
     };
 
     // before arg parsing, check for the NO_COLOR environment variable
@@ -1337,9 +1337,9 @@ fn buildOutputType(
                     } else if (mem.eql(u8, arg, "--entitlements")) {
                         entitlements = args_iter.nextOrFatal();
                     } else if (mem.eql(u8, arg, "-fcompiler-rt")) {
-                        want_compiler_rt = true;
+                        create_module.want_compiler_rt = true;
                     } else if (mem.eql(u8, arg, "-fno-compiler-rt")) {
-                        want_compiler_rt = false;
+                        create_module.want_compiler_rt = false;
                     } else if (mem.eql(u8, arg, "-feach-lib-rpath")) {
                         create_module.each_lib_rpath = true;
                     } else if (mem.eql(u8, arg, "-fno-each-lib-rpath")) {
@@ -2119,11 +2119,11 @@ fn buildOutputType(
                     .rtlib => {
                         // Unlike Clang, we support `none` for explicitly omitting compiler-rt.
                         if (mem.eql(u8, "none", it.only_arg)) {
-                            want_compiler_rt = false;
+                            create_module.want_compiler_rt = false;
                         } else if (mem.eql(u8, "compiler-rt", it.only_arg) or
                             mem.eql(u8, "libgcc", it.only_arg))
                         {
-                            want_compiler_rt = true;
+                            create_module.want_compiler_rt = true;
                         } else {
                             // Note that we don't support `platform`.
                             fatal("unsupported -rtlib option '{s}'", .{it.only_arg});
@@ -3245,7 +3245,7 @@ fn buildOutputType(
         .system_lib_names = create_module.resolved_system_libs.items(.name),
         .system_lib_infos = create_module.resolved_system_libs.items(.lib),
         .wasi_emulated_libs = create_module.wasi_emulated_libs.items,
-        .want_compiler_rt = want_compiler_rt,
+        .want_compiler_rt = create_module.want_compiler_rt,
         .hash_style = hash_style,
         .linker_script = linker_script,
         .version_script = version_script,
@@ -3525,6 +3525,7 @@ const CreateModule = struct {
     each_lib_rpath: ?bool,
     libc_paths_file: ?[]const u8,
     link_objects: std.ArrayListUnmanaged(Compilation.LinkObject),
+    want_compiler_rt: ?bool,
 };
 
 fn createModule(
@@ -3641,16 +3642,18 @@ fn createModule(
                 create_module.opts.link_libcpp = true;
                 continue;
             }
-            switch (target_util.classifyCompilerRtLibName(target, lib_name)) {
-                .none => {},
-                .only_libunwind, .both => {
-                    create_module.opts.link_libunwind = true;
-                    continue;
-                },
-                .only_compiler_rt => {
-                    warn("ignoring superfluous library '{s}': this dependency is fulfilled instead by compiler-rt which zig unconditionally provides", .{lib_name});
-                    continue;
-                },
+            if (create_module.want_compiler_rt != false) {
+                switch (target_util.classifyCompilerRtLibName(target, lib_name)) {
+                    .none => {},
+                    .only_libunwind, .both => {
+                        create_module.opts.link_libunwind = true;
+                        continue;
+                    },
+                    .only_compiler_rt => {
+                        warn("ignoring superfluous library '{s}': this dependency is fulfilled instead by compiler-rt which zig unconditionally provides", .{lib_name});
+                        continue;
+                    },
+                }
             }
 
             if (target.isMinGW()) {
